@@ -1,4 +1,4 @@
-##===- clang-tidy/util/Makefile --------------------------*- Makefile -*-===##
+##===- clang-tidy/microsoft/Makefile ----------------------*- Makefile -*-===##
 #
 #                     The LLVM Compiler Infrastructure
 #
@@ -7,6 +7,6 @@
 #
 ##===----------------------------------------------------------------------===##
 CLANG_LEVEL := ../../../..
-LIBRARYNAME := clangTidyUtils
+LIBRARYNAME := clangTidyMicrosoftModule
 
 include $(CLANG_LEVEL)/Makefile
