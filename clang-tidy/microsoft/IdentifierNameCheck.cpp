@@ -25,7 +25,7 @@ void IdentifierNameCheck::registerMatchers(ast_matchers::MatchFinder *Finder) {
   Finder->addMatcher(recordDecl().bind("record"), this);
   Finder->addMatcher(typedefDecl().bind("typedef"), this);
   Finder->addMatcher(enumDecl().bind("enum"), this);
-  Finder->addMatcher(enumConstantDecl().bind("enumConst"), this);
+  Finder->addMatcher(enumConstantDecl().bind("enumconst"), this);
   Finder->addMatcher(namespaceDecl().bind("namespace"), this);
 }
 
@@ -150,24 +150,24 @@ void IdentifierNameCheck::check(const MatchFinder::MatchResult &Result) {
   variableCheck(Variable);
 
   // Match class/struct/union fields
-  const clang::FieldDecl *Field = Result.Nodes.getNodeAs<FieldDecl>("field");
+  const clang::NamedDecl *Field = Result.Nodes.getNodeAs<NamedDecl>("field");
   isCamlCaseCheck(Field, "Field", CodeFlags::MustStartUpperCase);
 
   // Match class/struct/unions
-  const clang::TypeDecl *Type = Result.Nodes.getNodeAs<TypeDecl>("type");
+  const clang::NamedDecl *Type = Result.Nodes.getNodeAs<NamedDecl>("record");
   isCamlCaseCheck(Type, "Type", CodeFlags::MustStartUpperCase);
 
   // Match typedefs
-  const clang::TypeDecl *TypeDef = Result.Nodes.getNodeAs<TypeDecl>("typedef");
+  const clang::NamedDecl *TypeDef = Result.Nodes.getNodeAs<NamedDecl>("typedef");
   isCamlCaseCheck(TypeDef, "Type", CodeFlags::MustStartUpperCase);
 
   // Match Enumerations
-  const clang::TypeDecl *Enum = Result.Nodes.getNodeAs<TypeDecl>("enum");
+  const clang::NamedDecl *Enum = Result.Nodes.getNodeAs<NamedDecl>("enum");
   isCamlCaseCheck(Enum, "Enumeration", CodeFlags::MustStartUpperCase);
 
   // Match Enumeration Constants
-  const clang::EnumConstantDecl *EnumConst =
-      Result.Nodes.getNodeAs<EnumConstantDecl>("enumconst");
+  const clang::NamedDecl *EnumConst =
+    Result.Nodes.getNodeAs<NamedDecl>("enumconst");
   isCamlCaseCheck(EnumConst, "Enumeration Constant",
                   CodeFlags::MustStartUpperCase |
                       CodeFlags::UnderScorePermitted);
