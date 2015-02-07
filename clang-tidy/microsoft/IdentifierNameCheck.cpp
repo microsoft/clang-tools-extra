@@ -40,10 +40,6 @@ void IdentifierNameCheck::warn(const clang::Decl *Declaration,
 void IdentifierNameCheck::isCamlCaseCheck(const clang::NamedDecl *Declaration,
                                           std::string Message,
                                           unsigned CodeFlags) {
-  if (Declaration == nullptr) {
-    return;
-  }
-
   if (Declaration->isImplicit()) {
     return;
   }
@@ -91,10 +87,6 @@ void IdentifierNameCheck::isCamlCaseCheck(const clang::NamedDecl *Declaration,
 }
 
 void IdentifierNameCheck::functionCheck(const clang::FunctionDecl *Function) {
-  if (Function == nullptr) {
-    return;
-  }
-
   if (Function->isOverloadedOperator()) {
     return;
   }
@@ -104,10 +96,6 @@ void IdentifierNameCheck::functionCheck(const clang::FunctionDecl *Function) {
 
 void
 IdentifierNameCheck::namespaceCheck(const clang::NamespaceDecl *NameSpace) {
-  if (NameSpace == nullptr) {
-    return;
-  }
-
   StringRef Name = NameSpace->getName();
 
   if (Name.empty()) {
@@ -116,10 +104,6 @@ IdentifierNameCheck::namespaceCheck(const clang::NamespaceDecl *NameSpace) {
 }
 
 void IdentifierNameCheck::variableCheck(const clang::VarDecl *Variable) {
-  if (Variable == nullptr) {
-    return;
-  }
-
   // Variables generally must start with an Uppercase letter.
   // However, we allow certain integer variables to be in lowercase.
   // For example:
@@ -143,39 +127,63 @@ void IdentifierNameCheck::check(const MatchFinder::MatchResult &Result) {
   // void F(int x)
   const clang::FunctionDecl *Function =
       Result.Nodes.getNodeAs<FunctionDecl>("function");
-  functionCheck(Function);
+  if (Function != nullptr) {
+    functionCheck(Function);
+    return;
+  }
 
   // Match variables -- locals, globals and parameters
   const clang::VarDecl *Variable = Result.Nodes.getNodeAs<VarDecl>("variable");
-  variableCheck(Variable);
+  if (Variable != nullptr) {
+    variableCheck(Variable);
+    return;
+  }
 
   // Match class/struct/union fields
   const clang::NamedDecl *Field = Result.Nodes.getNodeAs<NamedDecl>("field");
-  isCamlCaseCheck(Field, "Field", CodeFlags::MustStartUpperCase);
+  if (Field != nullptr) {
+    isCamlCaseCheck(Field, "Field", CodeFlags::MustStartUpperCase);
+    return;
+  }
 
   // Match class/struct/unions
   const clang::NamedDecl *Type = Result.Nodes.getNodeAs<NamedDecl>("record");
-  isCamlCaseCheck(Type, "Type", CodeFlags::MustStartUpperCase);
+  if (Type != nullptr) {
+    isCamlCaseCheck(Type, "Type", CodeFlags::MustStartUpperCase);
+    return;
+  }
 
   // Match typedefs
   const clang::NamedDecl *TypeDef = Result.Nodes.getNodeAs<NamedDecl>("typedef");
-  isCamlCaseCheck(TypeDef, "Type", CodeFlags::MustStartUpperCase);
+  if (TypeDef != nullptr) {
+    isCamlCaseCheck(TypeDef, "Type", CodeFlags::MustStartUpperCase);
+    return;
+  }
 
   // Match Enumerations
   const clang::NamedDecl *Enum = Result.Nodes.getNodeAs<NamedDecl>("enum");
-  isCamlCaseCheck(Enum, "Enumeration", CodeFlags::MustStartUpperCase);
+  if (Enum != nullptr) {
+    isCamlCaseCheck(Enum, "Enumeration", CodeFlags::MustStartUpperCase);
+    return;
+  }
 
   // Match Enumeration Constants
   const clang::NamedDecl *EnumConst =
     Result.Nodes.getNodeAs<NamedDecl>("enumconst");
-  isCamlCaseCheck(EnumConst, "Enumeration Constant",
-                  CodeFlags::MustStartUpperCase |
-                      CodeFlags::UnderScorePermitted);
+  if (EnumConst != nullptr) {
+    isCamlCaseCheck(EnumConst, "Enumeration Constant",
+      CodeFlags::MustStartUpperCase |
+      CodeFlags::UnderScorePermitted);
+    return;
+  }
 
   // Match Namespace declarations
   const clang::NamespaceDecl *NameSpace =
       Result.Nodes.getNodeAs<NamespaceDecl>("namespace");
-  namespaceCheck(NameSpace);
+  if (NameSpace != nullptr) {
+    namespaceCheck(NameSpace);
+    return;
+  }
 }
 
 } // namespace tidy
