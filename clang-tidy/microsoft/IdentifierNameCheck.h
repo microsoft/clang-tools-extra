@@ -31,14 +31,18 @@ private:
     UnderScorePermitted = 0x5
   };
 
-  void warn(const clang::Decl *Declaration, StringRef Message);
+  void warn(const clang::SourceLocation Location, StringRef Message);
 
   void functionCheck(const clang::FunctionDecl *Function);
   void namespaceCheck(const clang::NamespaceDecl *NameSpace);
   void variableCheck(const clang::VarDecl *Function);
 
+  void checkCase(const clang::SourceLocation Location, StringRef Name,
+                 std::string Message, unsigned CodeFlags);
   void isCamlCaseCheck(const clang::NamedDecl *Declaration, std::string Message,
                        unsigned CodeFlags);
+  void isCamlCaseCheck(const clang::SourceLocation Location, StringRef Name,
+                       std::string Message, unsigned CodeFlags);
 };
 
 } // namespace tidy
