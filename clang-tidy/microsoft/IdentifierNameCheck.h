@@ -39,9 +39,9 @@ private:
 
   void checkCase(const clang::SourceLocation Location, StringRef Name,
                  std::string Message, unsigned CodeFlags);
-  void isCamlCaseCheck(const clang::NamedDecl *Declaration, std::string Message,
+  void isCamelCaseCheck(const clang::NamedDecl *Declaration, std::string Message,
                        unsigned CodeFlags);
-  void isCamlCaseCheck(const clang::SourceLocation Location, StringRef Name,
+  void isCamelCaseCheck(const clang::SourceLocation Location, StringRef Name,
                        std::string Message, unsigned CodeFlags);
 };
 

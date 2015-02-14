@@ -64,10 +64,10 @@ void IdentifierNameCheck::checkCase(const clang::SourceLocation Location,
   }
 }
 
-// Check that a Declaration's identifier is written in CameCase,
+// Check that a Declaration's identifier is written in camelCase,
 // starting with an upper/lower case letter as specified in CodeFlags
 
-void IdentifierNameCheck::isCamlCaseCheck(const clang::SourceLocation Location,
+void IdentifierNameCheck::isCamelCaseCheck(const clang::SourceLocation Location,
                                           StringRef Name, std::string Message,
                                           unsigned CodeFlags) {
   checkCase(Location, Name, Message, CodeFlags);
@@ -84,7 +84,7 @@ void IdentifierNameCheck::isCamlCaseCheck(const clang::SourceLocation Location,
       if (Name.empty()) {
         warn(Location, Message + " name has incorrect use of '_'");
       } else {
-        isCamlCaseCheck(Location, Name, Message,
+        isCamelCaseCheck(Location, Name, Message,
                         CodeFlags & ~CodeFlags::UnderScorePermitted);
       }
 
@@ -94,16 +94,16 @@ void IdentifierNameCheck::isCamlCaseCheck(const clang::SourceLocation Location,
     // Some relaxation may be needed here for STL-like definitions
     // like push_back(), start_globals(), etc.
     // Will be added when encountered.
-    warn(Location, Message + " name must be camlCased (without '_')");
+    warn(Location, Message + " name must be camelCased (without '_')");
   }
 
   // Check for all-Upper case variables, except trivial ones
   if ((Name.size() > 2) && Name.equals(Name.upper())) {
-    warn(Location, Message + " name must be in camlCase, not UPPER case");
+    warn(Location, Message + " name must be in camelCase, not UPPER case");
   }
 }
 
-void IdentifierNameCheck::isCamlCaseCheck(const clang::NamedDecl *Declaration,
+void IdentifierNameCheck::isCamelCaseCheck(const clang::NamedDecl *Declaration,
                                           std::string Message,
                                           unsigned CodeFlags) {
   if (Declaration->isImplicit()) {
@@ -125,7 +125,7 @@ void IdentifierNameCheck::isCamlCaseCheck(const clang::NamedDecl *Declaration,
     return;
   }
 
-  isCamlCaseCheck(Declaration->getLocation(), Declaration->getName(), Message,
+  isCamelCaseCheck(Declaration->getLocation(), Declaration->getName(), Message,
                   CodeFlags);
 }
 
@@ -145,7 +145,7 @@ void IdentifierNameCheck::functionCheck(const clang::FunctionDecl *Function) {
     return;
   }
 
-  isCamlCaseCheck(Function, "Function", CodeFlags::MustStartLowerCase);
+  isCamelCaseCheck(Function, "Function", CodeFlags::MustStartLowerCase);
 }
 
 void
@@ -172,11 +172,11 @@ void IdentifierNameCheck::variableCheck(const clang::VarDecl *Variable) {
   bool IsIntegerLocal =
       VariableType->isIntegerType() || VariableType->isPointerType();
 
-  isCamlCaseCheck(Variable, "Variable", IsIntegerLocal
+  isCamelCaseCheck(Variable, "Variable", IsIntegerLocal
                                             ? CodeFlags::ShouldStartUpperCase
                                             : CodeFlags::MustStartUpperCase);
 #else
-  isCamlCaseCheck(Variable, "Variable", CodeFlags::MustStartUpperCase);
+  isCamelCaseCheck(Variable, "Variable", CodeFlags::MustStartUpperCase);
 #endif
 }
 
@@ -200,14 +200,14 @@ void IdentifierNameCheck::check(const MatchFinder::MatchResult &Result) {
   // Match class/struct/union fields
   const clang::NamedDecl *Field = Result.Nodes.getNodeAs<NamedDecl>("field");
   if (Field != nullptr) {
-    isCamlCaseCheck(Field, "Field", CodeFlags::MustStartUpperCase);
+    isCamelCaseCheck(Field, "Field", CodeFlags::MustStartUpperCase);
     return;
   }
 
   // Match class/struct/unions
   const clang::NamedDecl *Type = Result.Nodes.getNodeAs<NamedDecl>("record");
   if (Type != nullptr) {
-    isCamlCaseCheck(Type, "Type", CodeFlags::MustStartUpperCase);
+    isCamelCaseCheck(Type, "Type", CodeFlags::MustStartUpperCase);
     return;
   }
 
@@ -215,14 +215,14 @@ void IdentifierNameCheck::check(const MatchFinder::MatchResult &Result) {
   const clang::NamedDecl *TypeDef =
       Result.Nodes.getNodeAs<NamedDecl>("typedef");
   if (TypeDef != nullptr) {
-    isCamlCaseCheck(TypeDef, "Type", CodeFlags::MustStartUpperCase);
+    isCamelCaseCheck(TypeDef, "Type", CodeFlags::MustStartUpperCase);
     return;
   }
 
   // Match Enumerations
   const clang::NamedDecl *Enum = Result.Nodes.getNodeAs<NamedDecl>("enum");
   if (Enum != nullptr) {
-    isCamlCaseCheck(Enum, "Enumeration", CodeFlags::MustStartUpperCase);
+    isCamelCaseCheck(Enum, "Enumeration", CodeFlags::MustStartUpperCase);
     return;
   }
 
@@ -230,7 +230,7 @@ void IdentifierNameCheck::check(const MatchFinder::MatchResult &Result) {
   const clang::NamedDecl *EnumConst =
       Result.Nodes.getNodeAs<NamedDecl>("enumconst");
   if (EnumConst != nullptr) {
-    isCamlCaseCheck(EnumConst, "Enumeration Constant",
+    isCamelCaseCheck(EnumConst, "Enumeration Constant",
                     CodeFlags::MustStartUpperCase |
                         CodeFlags::UnderScorePermitted);
     return;
