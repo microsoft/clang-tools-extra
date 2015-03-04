@@ -36,16 +36,16 @@ void IdentifierNameCheck::warn(const clang::SourceLocation Location,
 
 void IdentifierNameCheck::checkCase(const clang::SourceLocation Location,
                                     const StringRef Name, std::string Message,
-                                    unsigned CodeFlags) {
+                                    unsigned TheCodeFlags) {
   char FirstLetter = Name.front();
 
-  if ((CodeFlags & CodeFlags::MustStartUpperCase) ||
-      (CodeFlags & CodeFlags::ShouldStartUpperCase)) {
+  if ((TheCodeFlags & CodeFlags::MustStartUpperCase) ||
+      (TheCodeFlags & CodeFlags::ShouldStartUpperCase)) {
     if (clang::isUppercase(FirstLetter)) {
       return;
     }
 
-    if ((CodeFlags & CodeFlags::ShouldStartUpperCase) &&
+    if ((TheCodeFlags & CodeFlags::ShouldStartUpperCase) &&
         Name.equals(Name.lower())) {
       // Permit lower case names for integer variables
       return;
@@ -55,7 +55,7 @@ void IdentifierNameCheck::checkCase(const clang::SourceLocation Location,
     return;
   }
 
-  if (CodeFlags & CodeFlags::MustStartLowerCase) {
+  if (TheCodeFlags & CodeFlags::MustStartLowerCase) {
     if (clang::isLowercase(FirstLetter)) {
       return;
     }
@@ -69,13 +69,13 @@ void IdentifierNameCheck::checkCase(const clang::SourceLocation Location,
 
 void IdentifierNameCheck::isCamelCaseCheck(const clang::SourceLocation Location,
                                           StringRef Name, std::string Message,
-                                          unsigned CodeFlags) {
-  checkCase(Location, Name, Message, CodeFlags);
+                                          unsigned TheCodeFlags) {
+  checkCase(Location, Name, Message, TheCodeFlags);
 
   size_t UnderscorePos = Name.find('_');
 
   if (UnderscorePos != StringRef::npos) {
-    if (CodeFlags & CodeFlags::UnderScorePermitted) {
+    if (TheCodeFlags & CodeFlags::UnderScorePermitted) {
       // For Enumerations, a single qualifier using underscore is permitted.
       // Normal naming rules are enforced after the qualifier.
 
@@ -85,7 +85,7 @@ void IdentifierNameCheck::isCamelCaseCheck(const clang::SourceLocation Location,
         warn(Location, Message + " name has incorrect use of '_'");
       } else {
         isCamelCaseCheck(Location, Name, Message,
-                        CodeFlags & ~CodeFlags::UnderScorePermitted);
+                         TheCodeFlags & ~CodeFlags::UnderScorePermitted);
       }
 
       return;
@@ -105,7 +105,7 @@ void IdentifierNameCheck::isCamelCaseCheck(const clang::SourceLocation Location,
 
 void IdentifierNameCheck::isCamelCaseCheck(const clang::NamedDecl *Declaration,
                                           std::string Message,
-                                          unsigned CodeFlags) {
+                                          unsigned TheCodeFlags) {
   if (Declaration->isImplicit()) {
     return;
   }
@@ -126,7 +126,7 @@ void IdentifierNameCheck::isCamelCaseCheck(const clang::NamedDecl *Declaration,
   }
 
   isCamelCaseCheck(Declaration->getLocation(), Declaration->getName(), Message,
-                  CodeFlags);
+                   TheCodeFlags);
 }
 
 void IdentifierNameCheck::functionCheck(const clang::FunctionDecl *Function) {
