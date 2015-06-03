@@ -39,15 +39,20 @@ void StaticAssertCheck::registerMatchers(MatchFinder *Finder) {
           anyOf(binaryOperator(hasEitherOperand(IsAlwaysFalseWithCast)),
           anything())).bind("assertExprRoot"),
       IsAlwaysFalse);
-  auto Condition = expr(anyOf(
+  auto NonConstexprFunctionCall =
+      callExpr(hasDeclaration(functionDecl(unless(isConstexpr()))));
+  auto AssertCondition = expr(anyOf(
       expr(ignoringParenCasts(anyOf(
           AssertExprRoot,
           unaryOperator(hasUnaryOperand(ignoringParenCasts(AssertExprRoot)))))),
-      anything()));
+      anything()), unless(findAll(NonConstexprFunctionCall))).bind("condition");
+  auto Condition = anyOf(ignoringParenImpCasts(callExpr(
+      hasDeclaration(functionDecl(hasName("__builtin_expect"))),
+      hasArgument(0, AssertCondition))), AssertCondition);
 
   Finder->addMatcher(
-      stmt(anyOf(conditionalOperator(hasCondition(Condition.bind("condition"))),
-                 ifStmt(hasCondition(Condition.bind("condition")))),
+      stmt(anyOf(conditionalOperator(hasCondition(Condition)),
+                 ifStmt(hasCondition(Condition))),
            unless(isInTemplateInstantiation())).bind("condStmt"),
       this);
 }
