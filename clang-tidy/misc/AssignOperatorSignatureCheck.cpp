@@ -19,6 +19,11 @@ namespace misc {
 
 void AssignOperatorSignatureCheck::registerMatchers(
     ast_matchers::MatchFinder *Finder) {
+  // Only register the matchers for C++; the functionality currently does not
+  // provide any benefit to other languages, despite being benign.
+  if (!getLangOpts().CPlusPlus)
+    return;
+
   const auto HasGoodReturnType = methodDecl(returns(lValueReferenceType(pointee(
       unless(isConstQualified()), hasDeclaration(equalsBoundNode("class"))))));
 
@@ -28,7 +33,8 @@ void AssignOperatorSignatureCheck::registerMatchers(
   const auto IsSelfAssign =
       methodDecl(unless(anyOf(isDeleted(), isPrivate(), isImplicit())),
                  hasName("operator="), ofClass(recordDecl().bind("class")),
-                 hasParameter(0, parmVarDecl(hasType(IsSelf)))).bind("method");
+                 hasParameter(0, parmVarDecl(hasType(IsSelf))))
+          .bind("method");
 
   Finder->addMatcher(
       methodDecl(IsSelfAssign, unless(HasGoodReturnType)).bind("ReturnType"),
