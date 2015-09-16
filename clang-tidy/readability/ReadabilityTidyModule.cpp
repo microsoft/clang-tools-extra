@@ -14,10 +14,11 @@
 #include "ContainerSizeEmptyCheck.h"
 #include "ElseAfterReturnCheck.h"
 #include "FunctionSizeCheck.h"
+#include "IdentifierNamingCheck.h"
+#include "InconsistentDeclarationParameterNameCheck.h"
 #include "NamedParameterCheck.h"
 #include "RedundantSmartptrGetCheck.h"
 #include "RedundantStringCStrCheck.h"
-#include "ShrinkToFitCheck.h"
 #include "SimplifyBooleanExprCheck.h"
 
 namespace clang {
@@ -35,14 +36,16 @@ public:
         "readability-else-after-return");
     CheckFactories.registerCheck<FunctionSizeCheck>(
         "readability-function-size");
+    CheckFactories.registerCheck<IdentifierNamingCheck>(
+        "readability-identifier-naming");
+    CheckFactories.registerCheck<InconsistentDeclarationParameterNameCheck>(
+        "readability-inconsistent-declaration-parameter-name");
     CheckFactories.registerCheck<readability::NamedParameterCheck>(
         "readability-named-parameter");
     CheckFactories.registerCheck<RedundantSmartptrGetCheck>(
         "readability-redundant-smartptr-get");
     CheckFactories.registerCheck<RedundantStringCStrCheck>(
         "readability-redundant-string-cstr");
-    CheckFactories.registerCheck<ShrinkToFitCheck>(
-        "readability-shrink-to-fit");
     CheckFactories.registerCheck<SimplifyBooleanExprCheck>(
         "readability-simplify-boolean-expr");
   }

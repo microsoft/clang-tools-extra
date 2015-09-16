@@ -14,6 +14,7 @@ target_link_libraries(clang-tidy
   clangTidyLLVMModule
   clangTidyMicrosoftModule
   clangTidyMiscModule
+  clangTidyModernizeModule
   clangTidyReadabilityModule
   clangTooling
   )

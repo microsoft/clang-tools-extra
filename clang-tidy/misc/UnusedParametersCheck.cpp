@@ -84,7 +84,8 @@ void UnusedParametersCheck::warnOnUnusedParameter(
 
   // Fix all redeclarations.
   for (const FunctionDecl *FD : Function->redecls())
-    MyDiag << removeParameter(FD, ParamIndex);
+    if (FD->param_size())
+      MyDiag << removeParameter(FD, ParamIndex);
 
   // Fix all call sites.
   auto CallMatches = ast_matchers::match(
@@ -97,7 +98,8 @@ void UnusedParametersCheck::warnOnUnusedParameter(
 
 void UnusedParametersCheck::check(const MatchFinder::MatchResult &Result) {
   const auto *Function = Result.Nodes.getNodeAs<FunctionDecl>("function");
-  if (!Function->doesThisDeclarationHaveABody())
+  if (!Function->doesThisDeclarationHaveABody() ||
+      !Function->hasWrittenPrototype())
     return;
   for (unsigned i = 0, e = Function->getNumParams(); i != e; ++i) {
     const auto *Param = Function->getParamDecl(i);

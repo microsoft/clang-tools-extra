@@ -17,6 +17,7 @@
 #include "clang/Frontend/FrontendActions.h"
 #include "clang/Tooling/Refactoring.h"
 #include "clang/Tooling/Tooling.h"
+#include <map>
 
 namespace clang {
 namespace tidy {
@@ -32,6 +33,10 @@ private:
   std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &Compiler,
                                                  StringRef File) override {
     Context.setSourceManager(&Compiler.getSourceManager());
+    Context.setCurrentFile(File);
+    Context.setASTContext(&Compiler.getASTContext());
+
+    Check.registerMatchers(&Finder);
     Check.registerPPCallbacks(Compiler);
     return Finder.newASTConsumer();
   }
@@ -46,30 +51,41 @@ std::string
 runCheckOnCode(StringRef Code, std::vector<ClangTidyError> *Errors = nullptr,
                const Twine &Filename = "input.cc",
                ArrayRef<std::string> ExtraArgs = None,
-               const ClangTidyOptions &ExtraOptions = ClangTidyOptions()) {
+               const ClangTidyOptions &ExtraOptions = ClangTidyOptions(),
+               std::map<StringRef, StringRef> PathsToContent =
+                   std::map<StringRef, StringRef>()) {
   ClangTidyOptions Options = ExtraOptions;
   Options.Checks = "*";
   ClangTidyContext Context(llvm::make_unique<DefaultOptionsProvider>(
       ClangTidyGlobalOptions(), Options));
   ClangTidyDiagnosticConsumer DiagConsumer(Context);
   T Check("test-check", &Context);
-  ast_matchers::MatchFinder Finder;
-  Check.registerMatchers(&Finder);
-  Context.setCurrentFile(Filename.str());
 
   std::vector<std::string> ArgCXX11(1, "clang-tidy");
   ArgCXX11.push_back("-fsyntax-only");
   ArgCXX11.push_back("-std=c++11");
+  ArgCXX11.push_back("-Iinclude");
   ArgCXX11.insert(ArgCXX11.end(), ExtraArgs.begin(), ExtraArgs.end());
   ArgCXX11.push_back(Filename.str());
+
+  ast_matchers::MatchFinder Finder;
   llvm::IntrusiveRefCntPtr<FileManager> Files(
       new FileManager(FileSystemOptions()));
   tooling::ToolInvocation Invocation(
       ArgCXX11, new TestClangTidyAction(Check, Finder, Context), Files.get());
   Invocation.mapVirtualFile(Filename.str(), Code);
+  for (const auto &FileContent : PathsToContent) {
+    Invocation.mapVirtualFile(Twine("include/" + FileContent.first).str(),
+                              FileContent.second);
+  }
   Invocation.setDiagnosticConsumer(&DiagConsumer);
-  if (!Invocation.run())
-    return "";
+  if (!Invocation.run()) {
+    std::string ErrorText;
+    for (const auto &Error : Context.getErrors()) {
+      ErrorText += Error.Message.Message + "\n";
+    }
+    llvm::report_fatal_error(ErrorText);
+  }
 
   DiagConsumer.finish();
   tooling::Replacements Fixes;
