@@ -112,7 +112,8 @@ StatementMatcher makeArrayLoopMatcher() {
 ///   - If the end iterator variable 'g' is defined, it is the same as 'f'.
 StatementMatcher makeIteratorLoopMatcher() {
   StatementMatcher BeginCallMatcher =
-      memberCallExpr(argumentCountIs(0), callee(methodDecl(hasName("begin"))))
+      cxxMemberCallExpr(argumentCountIs(0),
+                        callee(cxxMethodDecl(hasName("begin"))))
           .bind(BeginCallName);
 
   DeclarationMatcher InitDeclMatcher =
@@ -125,8 +126,8 @@ StatementMatcher makeIteratorLoopMatcher() {
   DeclarationMatcher EndDeclMatcher =
       varDecl(hasInitializer(anything())).bind(EndVarName);
 
-  StatementMatcher EndCallMatcher =
-      memberCallExpr(argumentCountIs(0), callee(methodDecl(hasName("end"))));
+  StatementMatcher EndCallMatcher = cxxMemberCallExpr(
+      argumentCountIs(0), callee(cxxMethodDecl(hasName("end"))));
 
   StatementMatcher IteratorBoundMatcher =
       expr(anyOf(ignoringParenImpCasts(
@@ -139,15 +140,15 @@ StatementMatcher makeIteratorLoopMatcher() {
       ignoringParenImpCasts(declRefExpr(to(varDecl().bind(ConditionVarName)))));
 
   StatementMatcher OverloadedNEQMatcher =
-      operatorCallExpr(hasOverloadedOperatorName("!="), argumentCountIs(2),
-                       hasArgument(0, IteratorComparisonMatcher),
-                       hasArgument(1, IteratorBoundMatcher));
+      cxxOperatorCallExpr(hasOverloadedOperatorName("!="), argumentCountIs(2),
+                          hasArgument(0, IteratorComparisonMatcher),
+                          hasArgument(1, IteratorBoundMatcher));
 
   // This matcher tests that a declaration is a CXXRecordDecl that has an
   // overloaded operator*(). If the operator*() returns by value instead of by
   // reference then the return type is tagged with DerefByValueResultName.
   internal::Matcher<VarDecl> TestDerefReturnsByValue =
-      hasType(recordDecl(hasMethod(allOf(
+      hasType(cxxRecordDecl(hasMethod(allOf(
           hasOverloadedOperatorName("*"),
           anyOf(
               // Tag the return type if it's by value.
@@ -178,7 +179,7 @@ StatementMatcher makeIteratorLoopMatcher() {
                                hasUnaryOperand(declRefExpr(
                                    to(varDecl(hasType(pointsTo(AnyType)))
                                           .bind(IncrementVarName))))),
-                 operatorCallExpr(
+                 cxxOperatorCallExpr(
                      hasOverloadedOperatorName("++"),
                      hasArgument(
                          0, declRefExpr(to(varDecl(TestDerefReturnsByValue)
@@ -229,20 +230,20 @@ StatementMatcher makePseudoArrayLoopMatcher() {
   // are also allowed.
   TypeMatcher RecordWithBeginEnd = qualType(
       anyOf(qualType(isConstQualified(),
-                     hasDeclaration(recordDecl(
-                         hasMethod(methodDecl(hasName("begin"), isConst())),
-                         hasMethod(methodDecl(hasName("end"),
-                                              isConst())))) // hasDeclaration
-                     ),                                     // qualType
+                     hasDeclaration(cxxRecordDecl(
+                         hasMethod(cxxMethodDecl(hasName("begin"), isConst())),
+                         hasMethod(cxxMethodDecl(hasName("end"),
+                                                 isConst())))) // hasDeclaration
+                     ),                                        // qualType
             qualType(unless(isConstQualified()),
                      hasDeclaration(
-                         recordDecl(hasMethod(hasName("begin")),
-                                    hasMethod(hasName("end"))))) // qualType
+                         cxxRecordDecl(hasMethod(hasName("begin")),
+                                       hasMethod(hasName("end"))))) // qualType
             ));
 
-  StatementMatcher SizeCallMatcher = memberCallExpr(
+  StatementMatcher SizeCallMatcher = cxxMemberCallExpr(
       argumentCountIs(0),
-      callee(methodDecl(anyOf(hasName("size"), hasName("length")))),
+      callee(cxxMethodDecl(anyOf(hasName("size"), hasName("length")))),
       on(anyOf(hasType(pointsTo(RecordWithBeginEnd)),
                hasType(RecordWithBeginEnd))));
 
@@ -390,10 +391,18 @@ static bool containerIsConst(const Expr *ContainerExpr, bool Dereference) {
         return false;
       CType = CType->getPointeeType();
     }
+    // If VDec is a reference to a container, Dereference is false,
+    // but we still need to check the const-ness of the underlying container
+    // type.
+    CType = CType.getNonReferenceType();
     return CType.isConstQualified();
   }
   return false;
 }
+
+LoopConvertCheck::RangeDescriptor::RangeDescriptor()
+    : ContainerNeedsDereference(false), DerefByConstRef(false),
+      DerefByValue(false), IsTriviallyCopyable(false) {}
 
 LoopConvertCheck::LoopConvertCheck(StringRef Name, ClangTidyContext *Context)
     : ClangTidyCheck(Name, Context), TUInfo(new TUTrackingInfo),
@@ -401,26 +410,42 @@ LoopConvertCheck::LoopConvertCheck(StringRef Name, ClangTidyContext *Context)
                         Options.get("MinConfidence", "reasonable"))
                         .Case("safe", Confidence::CL_Safe)
                         .Case("risky", Confidence::CL_Risky)
-                        .Default(Confidence::CL_Reasonable)) {}
+                        .Default(Confidence::CL_Reasonable)),
+      NamingStyle(StringSwitch<VariableNamer::NamingStyle>(
+                      Options.get("NamingStyle", "CamelCase"))
+                      .Case("camelBack", VariableNamer::NS_CamelBack)
+                      .Case("lower_case", VariableNamer::NS_LowerCase)
+                      .Case("UPPER_CASE", VariableNamer::NS_UpperCase)
+                      .Default(VariableNamer::NS_CamelCase)) {}
 
 void LoopConvertCheck::storeOptions(ClangTidyOptions::OptionMap &Opts) {
   SmallVector<std::string, 3> Confs{"risky", "reasonable", "safe"};
   Options.store(Opts, "MinConfidence", Confs[static_cast<int>(MinConfidence)]);
+
+  SmallVector<std::string, 4> Styles{"camelBack", "CamelCase", "lower_case",
+                                    "UPPER_CASE"};
+  Options.store(Opts, "NamingStyle", Styles[static_cast<int>(NamingStyle)]);
+}
+
+void LoopConvertCheck::registerMatchers(MatchFinder *Finder) {
+  // Only register the matchers for C++. Because this checker is used for
+  // modernization, it is reasonable to run it on any C++ standard with the
+  // assumption the user is trying to modernize their codebase.
+  if (!getLangOpts().CPlusPlus)
+    return;
+
+  Finder->addMatcher(makeArrayLoopMatcher(), this);
+  Finder->addMatcher(makeIteratorLoopMatcher(), this);
+  Finder->addMatcher(makePseudoArrayLoopMatcher(), this);
 }
 
 /// \brief Computes the changes needed to convert a given for loop, and
-/// applies it.
+/// applies them.
 void LoopConvertCheck::doConversion(
     ASTContext *Context, const VarDecl *IndexVar, const VarDecl *MaybeContainer,
-    StringRef ContainerString, const UsageResult &Usages,
-    const DeclStmt *AliasDecl, bool AliasUseRequired, bool AliasFromForInit,
-    const ForStmt *TheLoop, RangeDescriptor Descriptor) {
-  // If there aren't any usages, converting the loop would generate an unused
-  // variable warning.
-  if (Usages.size() == 0)
-    return;
-
-  auto Diag = diag(TheLoop->getForLoc(), "use range-based for loop instead");
+    const UsageResult &Usages, const DeclStmt *AliasDecl, bool AliasUseRequired,
+    bool AliasFromForInit, const ForStmt *Loop, RangeDescriptor Descriptor) {
+  auto Diag = diag(Loop->getForLoc(), "use range-based for loop instead");
 
   std::string VarName;
   bool VarNameFromAlias = (Usages.size() == 1) && AliasDecl;
@@ -451,17 +476,27 @@ void LoopConvertCheck::doConversion(
   } else {
     VariableNamer Namer(&TUInfo->getGeneratedDecls(),
                         &TUInfo->getParentFinder().getStmtToParentStmtMap(),
-                        TheLoop, IndexVar, MaybeContainer, Context);
+                        Loop, IndexVar, MaybeContainer, Context, NamingStyle);
     VarName = Namer.createIndexName();
     // First, replace all usages of the array subscript expression with our new
     // variable.
     for (const auto &Usage : Usages) {
       std::string ReplaceText;
+      SourceRange Range = Usage.Range;
       if (Usage.Expression) {
         // If this is an access to a member through the arrow operator, after
         // the replacement it must be accessed through the '.' operator.
         ReplaceText = Usage.Kind == Usage::UK_MemberThroughArrow ? VarName + "."
                                                                  : VarName;
+        auto Parents = Context->getParents(*Usage.Expression);
+        if (Parents.size() == 1) {
+          if (const auto *Paren = Parents[0].get<ParenExpr>()) {
+            // Usage.Expression will be replaced with the new index variable,
+            // and parenthesis around a simple DeclRefExpr can always be
+            // removed.
+            Range = Paren->getSourceRange();
+          }
+        }
       } else {
         // The Usage expression is only null in case of lambda captures (which
         // are VarDecl). If the index is captured by value, add '&' to capture
@@ -469,70 +504,49 @@ void LoopConvertCheck::doConversion(
         ReplaceText =
             Usage.Kind == Usage::UK_CaptureByCopy ? "&" + VarName : VarName;
       }
-      TUInfo->getReplacedVars().insert(std::make_pair(TheLoop, IndexVar));
+      TUInfo->getReplacedVars().insert(std::make_pair(Loop, IndexVar));
       Diag << FixItHint::CreateReplacement(
-          CharSourceRange::getTokenRange(Usage.Range), ReplaceText);
+          CharSourceRange::getTokenRange(Range), ReplaceText);
     }
   }
 
   // Now, we need to construct the new range expression.
-  SourceRange ParenRange(TheLoop->getLParenLoc(), TheLoop->getRParenLoc());
+  SourceRange ParenRange(Loop->getLParenLoc(), Loop->getRParenLoc());
 
-  QualType AutoRefType = Context->getAutoDeductType();
+  QualType AutoType = Context->getAutoDeductType();
 
   // If the new variable name is from the aliased variable, then the reference
   // type for the new variable should only be used if the aliased variable was
   // declared as a reference.
-  if (!VarNameFromAlias || AliasVarIsRef) {
-    // If an iterator's operator*() returns a 'T&' we can bind that to 'auto&'.
-    // If operator*() returns 'T' we can bind that to 'auto&&' which will deduce
-    // to 'T&&&'.
-    if (Descriptor.DerefByValue) {
+  bool UseCopy = (VarNameFromAlias && !AliasVarIsRef) ||
+                 (Descriptor.DerefByConstRef && Descriptor.IsTriviallyCopyable);
+
+  if (!UseCopy) {
+    if (Descriptor.DerefByConstRef) {
+      AutoType =
+          Context->getLValueReferenceType(Context->getConstType(AutoType));
+    } else if (Descriptor.DerefByValue) {
       if (!Descriptor.IsTriviallyCopyable)
-        AutoRefType = Context->getRValueReferenceType(AutoRefType);
+        AutoType = Context->getRValueReferenceType(AutoType);
     } else {
-      if (Descriptor.DerefByConstRef)
-        AutoRefType = Context->getConstType(AutoRefType);
-      AutoRefType = Context->getLValueReferenceType(AutoRefType);
+      AutoType = Context->getLValueReferenceType(AutoType);
     }
   }
 
   StringRef MaybeDereference = Descriptor.ContainerNeedsDereference ? "*" : "";
-  std::string TypeString = AutoRefType.getAsString();
+  std::string TypeString = AutoType.getAsString();
   std::string Range = ("(" + TypeString + " " + VarName + " : " +
-                       MaybeDereference + ContainerString + ")")
+                       MaybeDereference + Descriptor.ContainerString + ")")
                           .str();
   Diag << FixItHint::CreateReplacement(
       CharSourceRange::getTokenRange(ParenRange), Range);
-  TUInfo->getGeneratedDecls().insert(make_pair(TheLoop, VarName));
+  TUInfo->getGeneratedDecls().insert(make_pair(Loop, VarName));
 }
 
-/// \brief Determine if the change should be deferred or rejected, returning
-/// text which refers to the container iterated over if the change should
-/// proceed.
-StringRef LoopConvertCheck::checkRejections(ASTContext *Context,
-                                            const Expr *ContainerExpr,
-                                            const ForStmt *TheLoop) {
-  // If we already modified the range of this for loop, don't do any further
-  // updates on this iteration.
-  if (TUInfo->getReplacedVars().count(TheLoop))
-    return "";
-
-  Context->getTranslationUnitDecl();
-  TUInfo->getParentFinder();
-  TUInfo->getParentFinder().gatherAncestors(Context->getTranslationUnitDecl());
-  // Ensure that we do not try to move an expression dependent on a local
-  // variable declared inside the loop outside of it.
-  DependencyFinderASTVisitor DependencyFinder(
-      &TUInfo->getParentFinder().getStmtToParentStmtMap(),
-      &TUInfo->getParentFinder().getDeclToParentStmtMap(),
-      &TUInfo->getReplacedVars(), TheLoop);
-
-  // FIXME: Determine when the external dependency isn't an expression converted
-  // by another loop.
-  if (DependencyFinder.dependsOnInsideVariable(ContainerExpr))
-    return "";
-
+/// \brief Returns a string which refers to the container iterated over.
+StringRef LoopConvertCheck::getContainerString(ASTContext *Context,
+                                               const ForStmt *Loop,
+                                               const Expr *ContainerExpr) {
   StringRef ContainerString;
   if (isa<CXXThisExpr>(ContainerExpr->IgnoreParenImpCasts())) {
     ContainerString = "this";
@@ -545,140 +559,124 @@ StringRef LoopConvertCheck::checkRejections(ASTContext *Context,
   return ContainerString;
 }
 
-/// \brief Given a loop header that would be convertible, discover all usages
-/// of the index variable and convert the loop if possible.
-void LoopConvertCheck::findAndVerifyUsages(
-    ASTContext *Context, const VarDecl *LoopVar, const VarDecl *EndVar,
-    const Expr *ContainerExpr, const Expr *BoundExpr, const ForStmt *TheLoop,
-    LoopFixerKind FixerKind, RangeDescriptor Descriptor) {
-  ForLoopIndexUseVisitor Finder(Context, LoopVar, EndVar, ContainerExpr,
-                                BoundExpr,
-                                Descriptor.ContainerNeedsDereference);
-
-  if (ContainerExpr) {
-    ComponentFinderASTVisitor ComponentFinder;
-    ComponentFinder.findExprComponents(ContainerExpr->IgnoreParenImpCasts());
-    Finder.addComponents(ComponentFinder.getComponents());
+/// \brief Determines what kind of 'auto' must be used after converting a for
+/// loop that iterates over an array or pseudoarray.
+void LoopConvertCheck::getArrayLoopQualifiers(ASTContext *Context,
+                                              const BoundNodes &Nodes,
+                                              const Expr *ContainerExpr,
+                                              const UsageResult &Usages,
+                                              RangeDescriptor &Descriptor) {
+  // On arrays and pseudoarrays, we must figure out the qualifiers from the
+  // usages.
+  if (usagesAreConst(Usages) ||
+      containerIsConst(ContainerExpr, Descriptor.ContainerNeedsDereference)) {
+    Descriptor.DerefByConstRef = true;
   }
-
-  if (!Finder.findAndVerifyUsages(TheLoop->getBody()))
-    return;
-
-  Confidence ConfidenceLevel(Finder.getConfidenceLevel());
-  if (FixerKind == LFK_Array) {
-    // The array being indexed by IndexVar was discovered during traversal.
-    ContainerExpr = Finder.getContainerIndexed()->IgnoreParenImpCasts();
-
-    // Very few loops are over expressions that generate arrays rather than
-    // array variables. Consider loops over arrays that aren't just represented
-    // by a variable to be risky conversions.
-    if (!getReferencedVariable(ContainerExpr) &&
-        !isDirectMemberExpr(ContainerExpr))
-      ConfidenceLevel.lowerTo(Confidence::CL_Risky);
-
-    // Use 'const' if the array is const.
-    if (containerIsConst(ContainerExpr, Descriptor.ContainerNeedsDereference))
-      Descriptor.DerefByConstRef = true;
-
-  } else if (FixerKind == LFK_PseudoArray) {
-    if (!Descriptor.DerefByValue && !Descriptor.DerefByConstRef) {
-      const UsageResult &Usages = Finder.getUsages();
-      if (usagesAreConst(Usages) ||
-          containerIsConst(ContainerExpr,
-                           Descriptor.ContainerNeedsDereference)) {
-        Descriptor.DerefByConstRef = true;
-      } else if (usagesReturnRValues(Usages)) {
-        // If the index usages (dereference, subscript, at) return RValues,
-        // then we should not use a non-const reference.
-        Descriptor.DerefByValue = true;
-        // Try to find the type of the elements on the container from the
-        // usages.
-        for (const Usage &U : Usages) {
-          if (!U.Expression || U.Expression->getType().isNull())
-            continue;
-          QualType Type = U.Expression->getType().getCanonicalType();
-          if (U.Kind == Usage::UK_MemberThroughArrow) {
-            if (!Type->isPointerType())
-              continue;
-            Type = Type->getPointeeType();
-          }
-          Descriptor.IsTriviallyCopyable =
-              Type.isTriviallyCopyableType(*Context);
-        }
+  if (usagesReturnRValues(Usages)) {
+    // If the index usages (dereference, subscript, at, ...) return rvalues,
+    // then we should not use a reference, because we need to keep the code
+    // correct if it mutates the returned objects.
+    Descriptor.DerefByValue = true;
+  }
+  // Try to find the type of the elements on the container, to check if
+  // they are trivially copyable.
+  for (const Usage &U : Usages) {
+    if (!U.Expression || U.Expression->getType().isNull())
+      continue;
+    QualType Type = U.Expression->getType().getCanonicalType();
+    if (U.Kind == Usage::UK_MemberThroughArrow) {
+      if (!Type->isPointerType()) {
+        continue;
       }
+      Type = Type->getPointeeType();
+    }
+    Descriptor.IsTriviallyCopyable = Type.isTriviallyCopyableType(*Context);
+  }
+}
+
+/// \brief Determines what kind of 'auto' must be used after converting an
+/// iterator based for loop.
+void LoopConvertCheck::getIteratorLoopQualifiers(ASTContext *Context,
+                                                 const BoundNodes &Nodes,
+                                                 RangeDescriptor &Descriptor) {
+  // The matchers for iterator loops provide bound nodes to obtain this
+  // information.
+  const auto *InitVar = Nodes.getDeclAs<VarDecl>(InitVarName);
+  QualType CanonicalInitVarType = InitVar->getType().getCanonicalType();
+  const auto *DerefByValueType =
+      Nodes.getNodeAs<QualType>(DerefByValueResultName);
+  Descriptor.DerefByValue = DerefByValueType;
+
+  if (Descriptor.DerefByValue) {
+    // If the dereference operator returns by value then test for the
+    // canonical const qualification of the init variable type.
+    Descriptor.DerefByConstRef = CanonicalInitVarType.isConstQualified();
+    Descriptor.IsTriviallyCopyable =
+        DerefByValueType->isTriviallyCopyableType(*Context);
+  } else {
+    if (const auto *DerefType =
+            Nodes.getNodeAs<QualType>(DerefByRefResultName)) {
+      // A node will only be bound with DerefByRefResultName if we're dealing
+      // with a user-defined iterator type. Test the const qualification of
+      // the reference type.
+      auto ValueType = DerefType->getNonReferenceType();
+
+      Descriptor.DerefByConstRef = ValueType.isConstQualified();
+      Descriptor.IsTriviallyCopyable =
+          ValueType.isTriviallyCopyableType(*Context);
+    } else {
+      // By nature of the matcher this case is triggered only for built-in
+      // iterator types (i.e. pointers).
+      assert(isa<PointerType>(CanonicalInitVarType) &&
+             "Non-class iterator type is not a pointer type");
+
+      // We test for const qualification of the pointed-at type.
+      Descriptor.DerefByConstRef =
+          CanonicalInitVarType->getPointeeType().isConstQualified();
+      Descriptor.IsTriviallyCopyable =
+          CanonicalInitVarType->getPointeeType().isTriviallyCopyableType(
+              *Context);
     }
   }
-
-  StringRef ContainerString = checkRejections(Context, ContainerExpr, TheLoop);
-
-  if (ContainerString.empty() || ConfidenceLevel.getLevel() < MinConfidence)
-    return;
-
-  doConversion(Context, LoopVar, getReferencedVariable(ContainerExpr),
-               ContainerString, Finder.getUsages(), Finder.getAliasDecl(),
-               Finder.aliasUseRequired(), Finder.aliasFromForInit(), TheLoop,
-               Descriptor);
 }
 
-void LoopConvertCheck::registerMatchers(MatchFinder *Finder) {
-  // Only register the matchers for C++. Because this checker is used for
-  // modernization, it is reasonable to run it on any C++ standard with the
-  // assumption the user is trying to modernize their codebase.
-  if (getLangOpts().CPlusPlus) {
-    Finder->addMatcher(makeArrayLoopMatcher(), this);
-    Finder->addMatcher(makeIteratorLoopMatcher(), this);
-    Finder->addMatcher(makePseudoArrayLoopMatcher(), this);
-  }
+/// \brief Determines the parameters needed to build the range replacement.
+void LoopConvertCheck::determineRangeDescriptor(
+    ASTContext *Context, const BoundNodes &Nodes, const ForStmt *Loop,
+    LoopFixerKind FixerKind, const Expr *ContainerExpr,
+    const UsageResult &Usages, RangeDescriptor &Descriptor) {
+  Descriptor.ContainerString = getContainerString(Context, Loop, ContainerExpr);
+
+  if (FixerKind == LFK_Iterator)
+    getIteratorLoopQualifiers(Context, Nodes, Descriptor);
+  else
+    getArrayLoopQualifiers(Context, Nodes, ContainerExpr, Usages, Descriptor);
 }
 
-void LoopConvertCheck::check(const MatchFinder::MatchResult &Result) {
-  const BoundNodes &Nodes = Result.Nodes;
-  Confidence ConfidenceLevel(Confidence::CL_Safe);
-  ASTContext *Context = Result.Context;
-
-  const ForStmt *TheLoop;
-  LoopFixerKind FixerKind;
-
-  if ((TheLoop = Nodes.getStmtAs<ForStmt>(LoopNameArray))) {
-    FixerKind = LFK_Array;
-  } else if ((TheLoop = Nodes.getStmtAs<ForStmt>(LoopNameIterator))) {
-    FixerKind = LFK_Iterator;
-  } else {
-    TheLoop = Nodes.getStmtAs<ForStmt>(LoopNamePseudoArray);
-    assert(TheLoop && "Bad Callback. No for statement");
-    FixerKind = LFK_PseudoArray;
-  }
+/// \brief Check some of the conditions that must be met for the loop to be
+/// convertible.
+bool LoopConvertCheck::isConvertible(ASTContext *Context,
+                                     const ast_matchers::BoundNodes &Nodes,
+                                     const ForStmt *Loop,
+                                     LoopFixerKind FixerKind) {
+  // If we already modified the range of this for loop, don't do any further
+  // updates on this iteration.
+  if (TUInfo->getReplacedVars().count(Loop))
+    return false;
 
   // Check that we have exactly one index variable and at most one end variable.
   const auto *LoopVar = Nodes.getDeclAs<VarDecl>(IncrementVarName);
   const auto *CondVar = Nodes.getDeclAs<VarDecl>(ConditionVarName);
   const auto *InitVar = Nodes.getDeclAs<VarDecl>(InitVarName);
   if (!areSameVariable(LoopVar, CondVar) || !areSameVariable(LoopVar, InitVar))
-    return;
+    return false;
   const auto *EndVar = Nodes.getDeclAs<VarDecl>(EndVarName);
   const auto *ConditionEndVar = Nodes.getDeclAs<VarDecl>(ConditionEndVarName);
   if (EndVar && !areSameVariable(EndVar, ConditionEndVar))
-    return;
+    return false;
 
-  // If the end comparison isn't a variable, we can try to work with the
-  // expression the loop variable is being tested against instead.
-  const auto *EndCall = Nodes.getStmtAs<CXXMemberCallExpr>(EndCallName);
-  const auto *BoundExpr = Nodes.getStmtAs<Expr>(ConditionBoundName);
-
-  // If the loop calls end()/size() after each iteration, lower our confidence
-  // level.
-  if (FixerKind != LFK_Array && !EndVar)
-    ConfidenceLevel.lowerTo(Confidence::CL_Reasonable);
-
-  const Expr *ContainerExpr = nullptr;
-  RangeDescriptor Descriptor{false, false, false, false};
-  // FIXME: Try to put most of this logic inside a matcher. Currently, matchers
-  // don't allow the ight-recursive checks in digThroughConstructors.
+  // FIXME: Try to put most of this logic inside a matcher.
   if (FixerKind == LFK_Iterator) {
-    ContainerExpr = findContainer(Context, LoopVar->getInit(),
-                                  EndVar ? EndVar->getInit() : EndCall,
-                                  &Descriptor.ContainerNeedsDereference);
-
     QualType InitVarType = InitVar->getType();
     QualType CanonicalInitVarType = InitVarType.getCanonicalType();
 
@@ -688,72 +686,133 @@ void LoopConvertCheck::check(const MatchFinder::MatchResult &Result) {
         BeginCall->getMethodDecl()->getReturnType().getCanonicalType();
     if (CanonicalBeginType->isPointerType() &&
         CanonicalInitVarType->isPointerType()) {
-      QualType BeginPointeeType = CanonicalBeginType->getPointeeType();
-      QualType InitPointeeType = CanonicalInitVarType->getPointeeType();
       // If the initializer and the variable are both pointers check if the
-      // un-qualified pointee types match otherwise we don't use auto.
-      if (!Context->hasSameUnqualifiedType(InitPointeeType, BeginPointeeType))
-        return;
-      Descriptor.IsTriviallyCopyable =
-          BeginPointeeType.isTriviallyCopyableType(*Context);
-    } else {
+      // un-qualified pointee types match, otherwise we don't use auto.
+      if (!Context->hasSameUnqualifiedType(
+              CanonicalBeginType->getPointeeType(),
+              CanonicalInitVarType->getPointeeType()))
+        return false;
+    } else if (!Context->hasSameType(CanonicalInitVarType,
+                                     CanonicalBeginType)) {
       // Check for qualified types to avoid conversions from non-const to const
       // iterator types.
-      if (!Context->hasSameType(CanonicalInitVarType, CanonicalBeginType))
-        return;
-    }
-
-    const auto *DerefByValueType =
-        Nodes.getNodeAs<QualType>(DerefByValueResultName);
-    Descriptor.DerefByValue = DerefByValueType;
-    if (!Descriptor.DerefByValue) {
-      if (const auto *DerefType =
-              Nodes.getNodeAs<QualType>(DerefByRefResultName)) {
-        // A node will only be bound with DerefByRefResultName if we're dealing
-        // with a user-defined iterator type. Test the const qualification of
-        // the reference type.
-        Descriptor.DerefByConstRef = (*DerefType)
-                                         ->getAs<ReferenceType>()
-                                         ->getPointeeType()
-                                         .isConstQualified();
-      } else {
-        // By nature of the matcher this case is triggered only for built-in
-        // iterator types (i.e. pointers).
-        assert(isa<PointerType>(CanonicalInitVarType) &&
-               "Non-class iterator type is not a pointer type");
-        QualType InitPointeeType = CanonicalInitVarType->getPointeeType();
-        QualType BeginPointeeType = CanonicalBeginType->getPointeeType();
-        // If the initializer and variable have both the same type just use auto
-        // otherwise we test for const qualification of the pointed-at type.
-        if (!Context->hasSameType(InitPointeeType, BeginPointeeType))
-          Descriptor.DerefByConstRef = InitPointeeType.isConstQualified();
-      }
-    } else {
-      // If the dereference operator returns by value then test for the
-      // canonical const qualification of the init variable type.
-      Descriptor.DerefByConstRef = CanonicalInitVarType.isConstQualified();
-      Descriptor.IsTriviallyCopyable =
-          DerefByValueType->isTriviallyCopyableType(*Context);
+      return false;
     }
   } else if (FixerKind == LFK_PseudoArray) {
-    if (!EndCall)
-      return;
+    // This call is required to obtain the container.
+    const auto *EndCall = Nodes.getStmtAs<CXXMemberCallExpr>(EndCallName);
+    if (!EndCall || !dyn_cast<MemberExpr>(EndCall->getCallee()))
+      return false;
+  }
+  return true;
+}
+
+void LoopConvertCheck::check(const MatchFinder::MatchResult &Result) {
+  const BoundNodes &Nodes = Result.Nodes;
+  Confidence ConfidenceLevel(Confidence::CL_Safe);
+  ASTContext *Context = Result.Context;
+
+  const ForStmt *Loop;
+  LoopFixerKind FixerKind;
+  RangeDescriptor Descriptor;
+
+  if ((Loop = Nodes.getStmtAs<ForStmt>(LoopNameArray))) {
+    FixerKind = LFK_Array;
+  } else if ((Loop = Nodes.getStmtAs<ForStmt>(LoopNameIterator))) {
+    FixerKind = LFK_Iterator;
+  } else {
+    Loop = Nodes.getStmtAs<ForStmt>(LoopNamePseudoArray);
+    assert(Loop && "Bad Callback. No for statement");
+    FixerKind = LFK_PseudoArray;
+  }
+
+  if (!isConvertible(Context, Nodes, Loop, FixerKind))
+    return;
+
+  const auto *LoopVar = Nodes.getDeclAs<VarDecl>(IncrementVarName);
+  const auto *EndVar = Nodes.getDeclAs<VarDecl>(EndVarName);
+
+  // If the loop calls end()/size() after each iteration, lower our confidence
+  // level.
+  if (FixerKind != LFK_Array && !EndVar)
+    ConfidenceLevel.lowerTo(Confidence::CL_Reasonable);
+
+  // If the end comparison isn't a variable, we can try to work with the
+  // expression the loop variable is being tested against instead.
+  const auto *EndCall = Nodes.getStmtAs<CXXMemberCallExpr>(EndCallName);
+  const auto *BoundExpr = Nodes.getStmtAs<Expr>(ConditionBoundName);
+
+  // Find container expression of iterators and pseudoarrays, and determine if
+  // this expression needs to be dereferenced to obtain the container.
+  // With array loops, the container is often discovered during the
+  // ForLoopIndexUseVisitor traversal.
+  const Expr *ContainerExpr = nullptr;
+  if (FixerKind == LFK_Iterator) {
+    ContainerExpr = findContainer(Context, LoopVar->getInit(),
+                                  EndVar ? EndVar->getInit() : EndCall,
+                                  &Descriptor.ContainerNeedsDereference);
+  } else if (FixerKind == LFK_PseudoArray) {
     ContainerExpr = EndCall->getImplicitObjectArgument();
-    const auto *Member = dyn_cast<MemberExpr>(EndCall->getCallee());
-    if (!Member)
-      return;
-    Descriptor.ContainerNeedsDereference = Member->isArrow();
+    Descriptor.ContainerNeedsDereference =
+        dyn_cast<MemberExpr>(EndCall->getCallee())->isArrow();
   }
 
   // We must know the container or an array length bound.
   if (!ContainerExpr && !BoundExpr)
     return;
 
-  if (ConfidenceLevel.getLevel() < MinConfidence)
+  ForLoopIndexUseVisitor Finder(Context, LoopVar, EndVar, ContainerExpr,
+                                BoundExpr,
+                                Descriptor.ContainerNeedsDereference);
+
+  // Find expressions and variables on which the container depends.
+  if (ContainerExpr) {
+    ComponentFinderASTVisitor ComponentFinder;
+    ComponentFinder.findExprComponents(ContainerExpr->IgnoreParenImpCasts());
+    Finder.addComponents(ComponentFinder.getComponents());
+  }
+
+  // Find usages of the loop index. If they are not used in a convertible way,
+  // stop here.
+  if (!Finder.findAndVerifyUsages(Loop->getBody()))
+    return;
+  ConfidenceLevel.lowerTo(Finder.getConfidenceLevel());
+
+  // Obtain the container expression, if we don't have it yet.
+  if (FixerKind == LFK_Array) {
+    ContainerExpr = Finder.getContainerIndexed()->IgnoreParenImpCasts();
+
+    // Very few loops are over expressions that generate arrays rather than
+    // array variables. Consider loops over arrays that aren't just represented
+    // by a variable to be risky conversions.
+    if (!getReferencedVariable(ContainerExpr) &&
+        !isDirectMemberExpr(ContainerExpr))
+      ConfidenceLevel.lowerTo(Confidence::CL_Risky);
+  }
+
+  // Find out which qualifiers we have to use in the loop range.
+  const UsageResult &Usages = Finder.getUsages();
+  determineRangeDescriptor(Context, Nodes, Loop, FixerKind, ContainerExpr,
+                           Usages, Descriptor);
+
+  // Ensure that we do not try to move an expression dependent on a local
+  // variable declared inside the loop outside of it.
+  // FIXME: Determine when the external dependency isn't an expression converted
+  // by another loop.
+  TUInfo->getParentFinder().gatherAncestors(Context->getTranslationUnitDecl());
+  DependencyFinderASTVisitor DependencyFinder(
+      &TUInfo->getParentFinder().getStmtToParentStmtMap(),
+      &TUInfo->getParentFinder().getDeclToParentStmtMap(),
+      &TUInfo->getReplacedVars(), Loop);
+
+  if (DependencyFinder.dependsOnInsideVariable(ContainerExpr) ||
+      Descriptor.ContainerString.empty() || Usages.empty() ||
+      ConfidenceLevel.getLevel() < MinConfidence)
     return;
 
-  findAndVerifyUsages(Context, LoopVar, EndVar, ContainerExpr, BoundExpr,
-                      TheLoop, FixerKind, Descriptor);
+  doConversion(Context, LoopVar, getReferencedVariable(ContainerExpr), Usages,
+               Finder.getAliasDecl(), Finder.aliasUseRequired(),
+               Finder.aliasFromForInit(), Loop, Descriptor);
 }
 
 } // namespace modernize
