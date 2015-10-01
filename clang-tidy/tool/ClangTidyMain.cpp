@@ -357,6 +357,11 @@ extern volatile int GoogleModuleAnchorSource;
 static int LLVM_ATTRIBUTE_UNUSED GoogleModuleAnchorDestination =
     GoogleModuleAnchorSource;
 
+// This anchor is used to force the linker to link the MicrosoftModule.
+extern volatile int MicrosoftModuleAnchorSource;
+static int LLVM_ATTRIBUTE_UNUSED MicrosoftModuleAnchorDestination =
+    MicrosoftModuleAnchorSource;
+
 // This anchor is used to force the linker to link the MiscModule.
 extern volatile int MiscModuleAnchorSource;
 static int LLVM_ATTRIBUTE_UNUSED MiscModuleAnchorDestination =
