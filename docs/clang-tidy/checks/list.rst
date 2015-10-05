@@ -32,6 +32,7 @@ List of clang-tidy Checks
    misc-move-constructor-init
    misc-new-delete-overloads
    misc-noexcept-move-constructor
+   misc-non-copyable-objects
    misc-sizeof-container
    misc-static-assert
    misc-swapped-arguments
@@ -41,6 +42,7 @@ List of clang-tidy Checks
    misc-unused-parameters
    misc-unused-raii
    modernize-loop-convert
+   modernize-make-unique
    modernize-pass-by-value
    modernize-replace-auto-ptr
    modernize-shrink-to-fit

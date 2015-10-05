@@ -112,8 +112,9 @@ StatementMatcher makeArrayLoopMatcher() {
 ///   - If the end iterator variable 'g' is defined, it is the same as 'f'.
 StatementMatcher makeIteratorLoopMatcher() {
   StatementMatcher BeginCallMatcher =
-      cxxMemberCallExpr(argumentCountIs(0),
-                        callee(cxxMethodDecl(hasName("begin"))))
+      cxxMemberCallExpr(
+          argumentCountIs(0),
+          callee(cxxMethodDecl(anyOf(hasName("begin"), hasName("cbegin")))))
           .bind(BeginCallName);
 
   DeclarationMatcher InitDeclMatcher =
@@ -127,7 +128,8 @@ StatementMatcher makeIteratorLoopMatcher() {
       varDecl(hasInitializer(anything())).bind(EndVarName);
 
   StatementMatcher EndCallMatcher = cxxMemberCallExpr(
-      argumentCountIs(0), callee(cxxMethodDecl(hasName("end"))));
+      argumentCountIs(0),
+      callee(cxxMethodDecl(anyOf(hasName("end"), hasName("cend")))));
 
   StatementMatcher IteratorBoundMatcher =
       expr(anyOf(ignoringParenImpCasts(
@@ -296,7 +298,8 @@ static const Expr *getContainerFromBeginEndCall(const Expr *Init, bool IsBegin,
     return nullptr;
   StringRef Name = Member->getMemberDecl()->getName();
   StringRef TargetName = IsBegin ? "begin" : "end";
-  if (Name != TargetName)
+  StringRef ConstTargetName = IsBegin ? "cbegin" : "cend";
+  if (Name != TargetName && Name != ConstTargetName)
     return nullptr;
 
   const Expr *SourceExpr = Member->getBase();
@@ -423,7 +426,7 @@ void LoopConvertCheck::storeOptions(ClangTidyOptions::OptionMap &Opts) {
   Options.store(Opts, "MinConfidence", Confs[static_cast<int>(MinConfidence)]);
 
   SmallVector<std::string, 4> Styles{"camelBack", "CamelCase", "lower_case",
-                                    "UPPER_CASE"};
+                                     "UPPER_CASE"};
   Options.store(Opts, "NamingStyle", Styles[static_cast<int>(NamingStyle)]);
 }
 
@@ -437,6 +440,30 @@ void LoopConvertCheck::registerMatchers(MatchFinder *Finder) {
   Finder->addMatcher(makeArrayLoopMatcher(), this);
   Finder->addMatcher(makeIteratorLoopMatcher(), this);
   Finder->addMatcher(makePseudoArrayLoopMatcher(), this);
+}
+
+/// \brief Given the range of a single declaration, such as:
+/// \code
+///   unsigned &ThisIsADeclarationThatCanSpanSeveralLinesOfCode =
+///       InitializationValues[I];
+///   next_instruction;
+/// \endcode
+/// Finds the range that has to be erased to remove this declaration without
+/// leaving empty lines, by extending the range until the beginning of the
+/// next instruction.
+///
+/// We need to delete a potential newline after the deleted alias, as
+/// clang-format will leave empty lines untouched. For all other formatting we
+/// rely on clang-format to fix it.
+void LoopConvertCheck::getAliasRange(SourceManager &SM, SourceRange &Range) {
+  bool Invalid = false;
+  const char *TextAfter =
+      SM.getCharacterData(Range.getEnd().getLocWithOffset(1), &Invalid);
+  if (Invalid)
+    return;
+  unsigned Offset = std::strspn(TextAfter, " \t\r\n");
+  Range =
+      SourceRange(Range.getBegin(), Range.getEnd().getLocWithOffset(Offset));
 }
 
 /// \brief Computes the changes needed to convert a given for loop, and
@@ -457,7 +484,7 @@ void LoopConvertCheck::doConversion(
     AliasVarIsRef = AliasVar->getType()->isReferenceType();
 
     // We keep along the entire DeclStmt to keep the correct range here.
-    const SourceRange &ReplaceRange = AliasDecl->getSourceRange();
+    SourceRange ReplaceRange = AliasDecl->getSourceRange();
 
     std::string ReplacementText;
     if (AliasUseRequired) {
@@ -467,6 +494,9 @@ void LoopConvertCheck::doConversion(
       // in a for loop's init clause. Need to put this ';' back while removing
       // the declaration of the alias variable. This is probably a bug.
       ReplacementText = ";";
+    } else {
+      // Avoid leaving empty lines or trailing whitespaces.
+      getAliasRange(Context->getSourceManager(), ReplaceRange);
     }
 
     Diag << FixItHint::CreateReplacement(
