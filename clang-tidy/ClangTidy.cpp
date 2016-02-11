@@ -101,7 +101,8 @@ public:
         Diags(IntrusiveRefCntPtr<DiagnosticIDs>(new DiagnosticIDs), &*DiagOpts,
               DiagPrinter),
         SourceMgr(Diags, Files), Rewrite(SourceMgr, LangOpts),
-        ApplyFixes(ApplyFixes), TotalFixes(0), AppliedFixes(0) {
+        ApplyFixes(ApplyFixes), TotalFixes(0), AppliedFixes(0),
+        WarningsAsErrors(0) {
     DiagOpts->ShowColors = llvm::sys::Process::StandardOutHasColors();
     DiagPrinter->BeginSourceFile(LangOpts);
   }
@@ -114,8 +115,14 @@ public:
     SmallVector<std::pair<SourceLocation, bool>, 4> FixLocations;
     {
       auto Level = static_cast<DiagnosticsEngine::Level>(Error.DiagLevel);
+      std::string Name = Error.CheckName;
+      if (Error.IsWarningAsError) {
+        Name += ",-warnings-as-errors";
+        Level = DiagnosticsEngine::Error;
+        WarningsAsErrors++;
+      }
       auto Diag = Diags.Report(Loc, Diags.getCustomDiagID(Level, "%0 [%1]"))
-                  << Message.Message << Error.CheckName;
+                  << Message.Message << Name;
       for (const tooling::Replacement &Fix : Error.Fix) {
         SourceLocation FixLoc = getLocation(Fix.getFilePath(), Fix.getOffset());
         SourceLocation FixEndLoc = FixLoc.getLocWithOffset(Fix.getLength());
@@ -147,6 +154,8 @@ public:
     }
   }
 
+  unsigned getWarningsAsErrorsCount() const { return WarningsAsErrors; }
+
 private:
   SourceLocation getLocation(StringRef FilePath, unsigned Offset) {
     if (FilePath.empty())
@@ -174,6 +183,7 @@ private:
   bool ApplyFixes;
   unsigned TotalFixes;
   unsigned AppliedFixes;
+  unsigned WarningsAsErrors;
 };
 
 class ClangTidyASTConsumer : public MultiplexConsumer {
@@ -334,8 +344,20 @@ OptionsView::OptionsView(StringRef CheckName,
                          const ClangTidyOptions::OptionMap &CheckOptions)
     : NamePrefix(CheckName.str() + "."), CheckOptions(CheckOptions) {}
 
-std::string OptionsView::get(StringRef LocalName, std::string Default) const {
+std::string OptionsView::get(StringRef LocalName, StringRef Default) const {
   const auto &Iter = CheckOptions.find(NamePrefix + LocalName.str());
+  if (Iter != CheckOptions.end())
+    return Iter->second;
+  return Default;
+}
+
+std::string OptionsView::getLocalOrGlobal(StringRef LocalName,
+                                          StringRef Default) const {
+  auto Iter = CheckOptions.find(NamePrefix + LocalName.str());
+  if (Iter != CheckOptions.end())
+    return Iter->second;
+  // Fallback to global setting, if present.
+  Iter = CheckOptions.find(LocalName.str());
   if (Iter != CheckOptions.end())
     return Iter->second;
   return Default;
@@ -421,11 +443,13 @@ runClangTidy(std::unique_ptr<ClangTidyOptionsProvider> OptionsProvider,
   return Context.getStats();
 }
 
-void handleErrors(const std::vector<ClangTidyError> &Errors, bool Fix) {
+void handleErrors(const std::vector<ClangTidyError> &Errors, bool Fix,
+                  unsigned &WarningsAsErrorsCount) {
   ErrorReporter Reporter(Fix);
   for (const ClangTidyError &Error : Errors)
     Reporter.reportDiagnostic(Error);
   Reporter.Finish();
+  WarningsAsErrorsCount += Reporter.getWarningsAsErrorsCount();
 }
 
 void exportReplacements(const std::vector<ClangTidyError> &Errors,

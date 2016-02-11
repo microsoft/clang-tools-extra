@@ -47,7 +47,15 @@ public:
   /// Reads the option with the check-local name \p LocalName from the
   /// \c CheckOptions. If the corresponding key is not present, returns
   /// \p Default.
-  std::string get(StringRef LocalName, std::string Default) const;
+  std::string get(StringRef LocalName, StringRef Default) const;
+
+  /// \brief Read a named option from the \c Context.
+  ///
+  /// Reads the option with the check-local name \p LocalName from local or
+  /// global \c CheckOptions. Gets local option first. If local is not
+  /// present, falls back to get global option. If global option is not present
+  /// either, returns Default.
+  std::string getLocalOrGlobal(StringRef LocalName, StringRef Default) const;
 
   /// \brief Read a named option from the \c Context and parse it as an integral
   /// type \c T.
@@ -214,7 +222,8 @@ runClangTidy(std::unique_ptr<ClangTidyOptionsProvider> OptionsProvider,
 //
 /// \brief Displays the found \p Errors to the users. If \p Fix is true, \p
 /// Errors containing fixes are automatically applied.
-void handleErrors(const std::vector<ClangTidyError> &Errors, bool Fix);
+void handleErrors(const std::vector<ClangTidyError> &Errors, bool Fix,
+                  unsigned &WarningsAsErrorsCount);
 
 /// \brief Serializes replacements into YAML and writes them to the specified
 /// output stream.
